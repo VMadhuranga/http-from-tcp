@@ -2,43 +2,10 @@ package main
 
 import (
 	"fmt"
-	"io"
+	"httpfromtcp/internal/request"
 	"log"
 	"net"
-	"strings"
 )
-
-func getLinesChannel(conn io.ReadCloser) <-chan string {
-	linesChan := make(chan string)
-
-	go func() {
-		currentLineContent := ""
-		for {
-			connContent := make([]byte, 8)
-			_, err := conn.Read(connContent)
-			if err == io.EOF {
-				break
-			}
-			if err != nil {
-				log.Printf("error reading connection content: %s\n", err)
-				break
-			}
-
-			currentLineContent += string(connContent)
-			currentLineContentSlice := strings.Split(currentLineContent, "\n")
-			if len(currentLineContentSlice) > 1 {
-				linesChan <- currentLineContentSlice[0]
-				currentLineContent = ""
-				currentLineContent += string(currentLineContentSlice[1])
-			}
-		}
-
-		linesChan <- currentLineContent
-		close(linesChan)
-	}()
-
-	return linesChan
-}
 
 func main() {
 	log.SetFlags(log.Lshortfile)
@@ -58,10 +25,19 @@ func main() {
 
 		log.Println("connection opened")
 
-		linesChan := getLinesChannel(conn)
-		for line := range linesChan {
-			fmt.Printf("%s\n", line)
+		req, err := request.RequestFromReader(conn)
+		if err != nil {
+			log.Printf("error getting request from connection: %v", err)
+			break
 		}
+
+		fmt.Printf(`Request Line:
+- Method: %v
+- Target: %v
+- Version: %v`,
+			req.RequestLine.Method,
+			req.RequestLine.RequestTarget,
+			req.RequestLine.HttpVersion)
 
 		log.Println("connection closed")
 	}
