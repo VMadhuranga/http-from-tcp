@@ -2,8 +2,9 @@ package request
 
 import (
 	"errors"
-	"fmt"
+	"httpfromtcp/internal/headers"
 	"io"
+	"log"
 	"strings"
 )
 
@@ -20,39 +21,38 @@ type requestState int
 
 const (
 	requestStateInitialized requestState = iota
+	requestStateParsingHeaders
 	requestStateDone
 )
 
 type Request struct {
 	RequestLine RequestLine
+	Headers     headers.Headers
 	state       requestState
 }
 
-func parseRequestLine(rawRequest string) (RequestLine, int, error) {
-	rawRequestSlice := strings.Split(rawRequest, crlf)
-	if len(rawRequestSlice) <= 1 {
+func parseRequestLine(rawRequestLine string) (RequestLine, int, error) {
+	crlfIDX := strings.Index(rawRequestLine, crlf)
+	if crlfIDX == -1 {
 		return RequestLine{}, 0, nil
 	}
 
-	rawRequestLineSlice := strings.Split(rawRequestSlice[0], " ")
+	requestLine := rawRequestLine[:crlfIDX]
+	requestLineSlice := strings.Split(requestLine, " ")
 
-	method := rawRequestLineSlice[0]
+	method := requestLineSlice[0]
 	if method != strings.ToUpper(method) {
-		return RequestLine{}, len(method), errors.New("invalid method")
+		return RequestLine{}, 0, errors.New("invalid method")
 	}
 
-	requestTarget := rawRequestLineSlice[1]
+	requestTarget := requestLineSlice[1]
 	if requestTarget == "" {
-		return RequestLine{},
-			len(fmt.Sprintf("%v %v", method, requestTarget)),
-			errors.New("invalid request target")
+		return RequestLine{}, 0, errors.New("invalid request target")
 	}
 
-	httpVersion := strings.Split(rawRequestLineSlice[2], "/")[1]
+	httpVersion := strings.Split(requestLineSlice[2], "/")[1]
 	if httpVersion != "1.1" {
-		return RequestLine{},
-			len(fmt.Sprintf("%v %v %v", method, requestTarget, rawRequestLineSlice[2])),
-			errors.New("invalid http version")
+		return RequestLine{}, 0, errors.New("invalid http version")
 	}
 
 	return RequestLine{
@@ -60,31 +60,60 @@ func parseRequestLine(rawRequest string) (RequestLine, int, error) {
 			RequestTarget: requestTarget,
 			HttpVersion:   httpVersion,
 		},
-		len(rawRequestSlice[0]),
+		len(requestLine + crlf),
 		nil
 }
 
-func (r *Request) parse(data []byte) (int, error) {
+func (r *Request) parseSingle(data []byte) (int, error) {
 	switch r.state {
 	case requestStateInitialized:
 		reqLine, n, err := parseRequestLine(string(data))
 		if err != nil {
-			return n, err
+			log.Printf("error parsing request line: %v\n", err)
+			return 0, err
 		}
-
 		if n == 0 {
 			return 0, nil
 		}
 
 		r.RequestLine = reqLine
-		r.state = requestStateDone
+		r.state = requestStateParsingHeaders
+
+		return n, nil
+	case requestStateParsingHeaders:
+		n, done, err := r.Headers.Parse(string(data))
+		if err != nil {
+			log.Printf("error parsing headers: %v\n", err)
+			return 0, err
+		}
+		if done {
+			r.state = requestStateDone
+		}
 
 		return n, nil
 	case requestStateDone:
 		return 0, errors.New("trying to read data in a done state")
+	default:
+		return 0, errors.New("unknown state")
+	}
+}
+
+func (r *Request) parse(data []byte) (int, error) {
+	totalBytesParsed := 0
+	for r.state != requestStateDone {
+		n, err := r.parseSingle(data[totalBytesParsed:])
+		if err != nil {
+			log.Printf("error parsing single: %v\n", err)
+			return 0, err
+		}
+		if n == 0 {
+			return totalBytesParsed, nil
+		}
+
+		totalBytesParsed += n
 	}
 
-	return 0, errors.New("unknown state")
+	return totalBytesParsed, nil
 }
 
 func RequestFromReader(reader io.Reader) (*Request, error) {
@@ -92,11 +121,12 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 	readToIndex := 0
 
 	req := &Request{
-		state: requestStateInitialized,
+		Headers: headers.NewHeaders(),
+		state:   requestStateInitialized,
 	}
 
 	for req.state != requestStateDone {
-		if len(buf) == cap(buf) {
+		if readToIndex >= len(buf) {
 			newBuf := make([]byte, len(buf)*2)
 			copy(newBuf, buf)
 			buf = newBuf
@@ -108,6 +138,7 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 			break
 		}
 		if err != nil {
+			log.Printf("error reading request: %v\n", err)
 			return nil, err
 		}
 
@@ -115,12 +146,11 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 
 		n, err = req.parse(buf[:readToIndex])
 		if err != nil {
+			log.Printf("error parsing request: %v\n", err)
 			return nil, err
 		}
 
-		newBuf := make([]byte, len(buf))
-		copy(newBuf, buf[:readToIndex])
-		buf = newBuf
+		copy(buf, buf[n:readToIndex])
 
 		readToIndex -= n
 	}
