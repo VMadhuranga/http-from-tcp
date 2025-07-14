@@ -70,7 +70,7 @@ func TestParse(t *testing.T) {
 	n, done, err = headers.Parse(string(data))
 	require.NoError(t, err)
 	require.NotNil(t, headers)
-	assert.Equal(t, 0, n)
+	assert.Equal(t, 2, n)
 	assert.True(t, done)
 
 	// Test: Invalid spacing header

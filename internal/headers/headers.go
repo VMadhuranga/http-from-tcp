@@ -40,7 +40,7 @@ func (h Headers) Parse(rawHeader string) (n int, done bool, err error) {
 		return 0, false, nil
 	}
 	if crlfIDX == 0 {
-		return 0, true, nil
+		return len(crlf), true, nil
 	}
 
 	header := rawHeader[:crlfIDX]
@@ -61,12 +61,20 @@ func (h Headers) Parse(rawHeader string) (n int, done bool, err error) {
 	val, ok := h[headerKey]
 	headerVal = strings.TrimSpace(headerVal)
 	if ok {
-		h[headerKey] = val + ", " + headerVal
+		if val == headerVal {
+			h[headerKey] = headerVal
+		} else {
+			h[headerKey] = val + ", " + headerVal
+		}
 	} else {
 		h[headerKey] = headerVal
 	}
 
 	return len(header + crlf), false, nil
+}
+
+func (h Headers) Get(headerKey string) string {
+	return h[strings.ToLower(headerKey)]
 }
 
 func NewHeaders() Headers {
