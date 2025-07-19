@@ -8,7 +8,7 @@ import (
 )
 
 func main() {
-	log.SetFlags(log.Lshortfile)
+	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
 
 	listener, err := net.Listen("tcp", ":42069")
 	if err != nil {
