@@ -1,18 +1,25 @@
 package main
 
 import (
+	"crypto/sha256"
+	"fmt"
+	"httpfromtcp/internal/headers"
 	"httpfromtcp/internal/request"
 	"httpfromtcp/internal/response"
 	"httpfromtcp/internal/server"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 )
 
 const port = 42069
 
-func testHandler(w *response.Writer, req *request.Request) {
+func handler(w *response.Writer, r *request.Request) {
 	resStatus := response.StatusOK
 	resBody := `<html>
   <head>
@@ -24,7 +31,7 @@ func testHandler(w *response.Writer, req *request.Request) {
   </body>
 </html>`
 
-	switch req.RequestLine.RequestTarget {
+	switch r.RequestLine.RequestTarget {
 	case "/yourproblem":
 		resStatus = response.StatusBadRequest
 		resBody = `<html>
@@ -50,6 +57,11 @@ func testHandler(w *response.Writer, req *request.Request) {
 </html>`
 	}
 
+	if strings.HasPrefix(r.RequestLine.RequestTarget, "/httpbin") {
+		httpBinProxyHandler(w, r)
+		return
+	}
+
 	w.WriteStatusLine(resStatus)
 
 	defHeaders := response.GetDefaultHeaders(len(resBody))
@@ -58,10 +70,56 @@ func testHandler(w *response.Writer, req *request.Request) {
 	w.WriteBody([]byte(resBody))
 }
 
+func httpBinProxyHandler(w *response.Writer, r *request.Request) {
+	path := strings.TrimPrefix(r.RequestLine.RequestTarget, "/httpbin")
+	url := "https://httpbin.org" + path
+
+	res, err := http.Get(url)
+	if err != nil {
+		log.Printf("error getting response: %v", err)
+		return
+	}
+	defer res.Body.Close()
+
+	defHeaders := response.GetDefaultHeaders(0)
+	delete(defHeaders, "Content-Length")
+	defHeaders["Transfer-Encoding"] = "chunked"
+	defHeaders["Trailer"] = "X-Content-SHA256, X-Content-Length"
+
+	w.WriteStatusLine(response.StatusCode(res.StatusCode))
+	w.WriteHeaders(defHeaders)
+
+	chunk := make([]byte, 1024)
+	rawBody := []byte{}
+	for {
+		n, err := res.Body.Read(chunk)
+		if err == io.EOF {
+			w.WriteChunkedBodyDone()
+			break
+		}
+		if err != nil {
+			log.Printf("error reading chunk: %v", err)
+			return
+		}
+		fmt.Println("data read:", n)
+
+		rawBody = append(rawBody, chunk[:n]...)
+		w.WriteChunkedBody(chunk[:n])
+	}
+
+	trailers := headers.NewHeaders()
+
+	sum := sha256.Sum256(rawBody)
+	trailers["X-Content-SHA256"] = string(sum[:])
+	trailers["X-Content-Length"] = strconv.Itoa(len(rawBody))
+
+	w.WriteTrailers(trailers)
+}
+
 func main() {
 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
 
-	server, err := server.Serve(port, testHandler)
+	server, err := server.Serve(port, handler)
 	if err != nil {
 		log.Fatalf("error starting server: %v\n", err)
 	}

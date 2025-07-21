@@ -80,3 +80,28 @@ func (w *Writer) WriteBody(body []byte) error {
 
 	return nil
 }
+
+func (w *Writer) WriteChunkedBody(p []byte) (int, error) {
+	chunkedBody := fmt.Sprintf("%X%v%s%v", len(p), crlf, p, crlf)
+	n, err := w.Res.Write([]byte(chunkedBody))
+	if err != nil {
+		log.Printf("error writing chunked body: %v", err)
+		return 0, err
+	}
+
+	return n, err
+}
+func (w *Writer) WriteChunkedBodyDone() (int, error) {
+	chunkedBody := fmt.Sprintf("%X%v%v", 0, crlf, crlf)
+	n, err := w.Res.Write([]byte(chunkedBody))
+	if err != nil {
+		log.Printf("error writing end of chunked body: %v", err)
+		return 0, err
+	}
+
+	return n, err
+}
+
+func (w *Writer) WriteTrailers(headers headers.Headers) error {
+	return w.WriteHeaders(headers)
+}
