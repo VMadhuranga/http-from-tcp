@@ -54,10 +54,6 @@ func (h Headers) Parse(rawHeader string) (n int, done bool, err error) {
 		return 0, false, errors.New("invalid header key")
 	}
 
-	if strings.Count(headerVal, " ") > 1 {
-		return 0, false, errors.New("invalid header value")
-	}
-
 	val, ok := h[headerKey]
 	headerVal = strings.TrimSpace(headerVal)
 	if ok {
